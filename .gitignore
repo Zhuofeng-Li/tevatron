@@ -4,3 +4,8 @@ __pycache__/
 examples/**/models/
 examples/**/results/
 examples/**/wandb/
+fineweb_10BT/**
+fineweb_10BT_emb/**
+embeddings/**
+tmp.*
+fineweb
