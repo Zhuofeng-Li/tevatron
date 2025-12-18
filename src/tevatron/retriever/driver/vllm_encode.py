@@ -2,6 +2,7 @@ import logging
 import os
 import pickle
 import sys
+import time
 
 import numpy as np
 from tqdm import tqdm
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    start_time = time.time()
+
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
@@ -60,16 +63,9 @@ def main():
     else:
         torch_dtype = 'float32'
 
-
-    pooler_config = PoolerConfig(pooling_type=model_args.pooling.upper(),
-                                 normalize=model_args.normalize)
-
     model = LLM(
         model=model_args.model_name_or_path,
         task="embed",
-        enforce_eager=True,
-        override_pooler_config=pooler_config,
-        dtype=torch_dtype,
         enable_lora=True if model_args.lora_name_or_path else False,
         max_lora_rank=model_args.lora_r,
     )
@@ -93,23 +89,35 @@ def main():
     )
 
     lookup_indices = []
-    vllm_inputs = []
-    for (batch_ids, batch) in tqdm(encode_loader, desc="Preprocessing"):
-        lookup_indices.extend(batch_ids)
-        vllm_inputs.extend([token_inputs(prompt_token_ids=token_ids) for token_ids in batch])
-
-    outputs = model.embed(vllm_inputs,
-                          lora_request=LoRARequest("emb_adapter",
-                                                   1,
-                                                   model_args.lora_name_or_path) if model_args.lora_name_or_path else None)
-
     encoded = []
-    for output in outputs:
-        encoded.append(output.outputs.embedding)
+
+    lora_request = LoRARequest("emb_adapter", 1, model_args.lora_name_or_path) if model_args.lora_name_or_path else None
+
+    for (batch_ids, batch) in tqdm(encode_loader, desc="Encoding"):
+        lookup_indices.extend(batch_ids)
+
+        # Batch inference
+        vllm_inputs = [token_inputs(prompt_token_ids=token_ids) for token_ids in batch]
+        outputs = model.embed(vllm_inputs, lora_request=lora_request)
+
+        # Process outputs immediately to save memory
+        for output in outputs:
+            encoded.append(output.outputs.embedding)
+
     encoded = np.stack(encoded, dtype=np.float16)
+
+    # Create output directory if it doesn't exist
+    output_dir = os.path.dirname(data_args.encode_output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Created output directory: {output_dir}")
 
     with open(data_args.encode_output_path, 'wb') as f:
         pickle.dump((encoded, lookup_indices), f)
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    logger.info(f"Total encoding time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
 
 
 if __name__ == "__main__":
