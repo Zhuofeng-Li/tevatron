@@ -9,11 +9,8 @@ uv pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/relea
 
 ## Embedding Gen 
 ```bash
-# fineweb 10BT corpus 
-hf download ZhuofengLi/fineweb_corpus --repo-type dataset --local-dir "./fineweb" --include "Sample-10BT/*"
-
-# gen finweb 10BT emb using qwen3-0.6B  
-bash exp/run_qwen3_0.6B_emb_fine_web.sh
+# gen finweb 10BT emb using qwen3-8B  
+bash exp/run_qwen3_8B_emb_fine_web.sh
 ```
 
 ## RAG Eval 
