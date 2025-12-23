@@ -78,7 +78,7 @@ def main():
     q_reps, q_lookup = pickle_load(args.query_reps)
     q_reps = q_reps
 
-    num_gpus = faiss.get_num_gpus()
+    num_gpus = faiss.get_num_gpus() # need faiss-gpu installed
     if num_gpus == 0:
         logger.info("No GPU found or using faiss-cpu. Back to CPU.")
     else:

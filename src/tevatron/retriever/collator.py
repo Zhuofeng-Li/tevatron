@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from transformers import PreTrainedTokenizer, ProcessorMixin
 from qwen_omni_utils import process_mm_info
 from PIL import Image
-
+from vllm.inputs import token_inputs
 from tevatron.retriever.arguments import DataArguments
 
 
@@ -307,7 +307,10 @@ class VllmEncodeCollator(EncodeCollator):
         )
         if self.data_args.append_eos_token:
             collated_texts['input_ids'] = [x + [self.tokenizer.eos_token_id] for x in collated_texts['input_ids']]
-        return text_ids, collated_texts['input_ids']
+
+        # Directly return vLLM TokenInputs
+        vllm_batch_inputs = [token_inputs(prompt_token_ids=ids) for ids in collated_texts['input_ids']]
+        return text_ids, vllm_batch_inputs
 
 
 @dataclass

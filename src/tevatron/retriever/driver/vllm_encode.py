@@ -56,13 +56,6 @@ def main():
         tokenizer.pad_token_id = tokenizer.eos_token_id
     tokenizer.padding_side = 'right'
 
-    if training_args.bf16:
-        torch_dtype = 'bfloat16'
-    elif training_args.fp16:
-        torch_dtype = 'float16'
-    else:
-        torch_dtype = 'float32'
-
     model = LLM(
         model=model_args.model_name_or_path,
         task="embed",
@@ -86,25 +79,33 @@ def main():
         shuffle=False,
         drop_last=False,
         num_workers=training_args.dataloader_num_workers,
+        pin_memory=True,
     )
 
     lookup_indices = []
-    encoded = []
-
     lora_request = LoRARequest("emb_adapter", 1, model_args.lora_name_or_path) if model_args.lora_name_or_path else None
 
-    for (batch_ids, batch) in tqdm(encode_loader, desc="Encoding"):
-        lookup_indices.extend(batch_ids)
+    # Pre-allocate memory for embeddings to avoid list accumulation
+    total_samples = len(encode_dataset)
+    encoded = None
+    current_idx = 0
 
-        # Batch inference
-        vllm_inputs = [token_inputs(prompt_token_ids=token_ids) for token_ids in batch]
+    for (batch_ids, vllm_inputs) in tqdm(encode_loader, desc="Encoding"):
+        lookup_indices.extend(batch_ids)
         outputs = model.embed(vllm_inputs, lora_request=lora_request)
 
-        # Process outputs immediately to save memory
-        for output in outputs:
-            encoded.append(output.outputs.embedding)
+        batch_embeddings = np.array([o.outputs.embedding for o in outputs], dtype=np.float16)
 
-    encoded = np.stack(encoded, dtype=np.float16)
+        # Initialize the output array on first batch (when we know embedding dimension)
+        if encoded is None:
+            embedding_dim = batch_embeddings.shape[1]
+            encoded = np.empty((total_samples, embedding_dim), dtype=np.float16)
+            logger.info(f"Allocated memory for {total_samples} embeddings of dimension {embedding_dim}")
+
+        # Write batch directly to pre-allocated array
+        batch_size = len(batch_embeddings)
+        encoded[current_idx:current_idx + batch_size] = batch_embeddings
+        current_idx += batch_size
 
     # Create output directory if it doesn't exist
     output_dir = os.path.dirname(data_args.encode_output_path)

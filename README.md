@@ -2,7 +2,8 @@
 ```bash 
 uv venv --python 3.12
 source .venv/bin/activate 
-uv pip install transformers datasets peft deepspeed accelerate faiss-cpu vllm 
+uv pip install transformers datasets peft deepspeed accelerate faiss-cpu vllm qwen-omni-utils pyserini "openai[aiohttp]"
+
 uv pip install -e .
 uv pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.15/flash_attn-2.8.3+cu126torch2.9-cp312-cp312-linux_x86_64.whl
 ```
@@ -14,20 +15,39 @@ bash exp/run_qwen3_8B_emb_fine_web.sh
 ```
 
 ## RAG Eval 
-### Setup dataset and emb (query and corpus)
+Here is a example assess the effectiveness of `Qwen3-Embedding-0.6B` retrievers
+
+### Generate query embedding (optional)
 ```bash 
-for s in 2 3 4 5 6
-do
-gpuid=$s
-CUDA_VISIBLE_DEVICES=$gpuid python -m tevatron.retriever.driver.vllm_encode \
+CUDA_VISIBLE_DEVICES=0 python -m tevatron.retriever.driver.vllm_encode \
   --model_name_or_path Qwen/Qwen3-Embedding-0.6B \
   --dataset_path data/browsecomp_plus_decrypted.jsonl \
-  --encode_output_path embeddings/query.{s}.pkl \
+  --encode_output_path embeddings/browsecomp_plus_query/qwen3_0.6b/query.pkl \
   --query_max_len 512 \
   --encode_is_query \
   --num_proc 32 \
-  --per_device_eval_batch_size 1024 \
-  --dataset_number_of_shards 5 \
-  --dataset_shard_index $s &
-done
+  --encode_is_query \
+  --query_prefix "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:" \
+  --dataloader_num_workers 32 \
+  --per_device_eval_batch_size 1024 
+```
+### Download embedding
+```bash
+# donwload browsecomp-plus-corpus embedding (qwen3-0.6B)
+huggingface-cli download Tevatron/browsecomp-plus-indexes --repo-type=dataset --include="qwen3-embedding-0.6b/*" --local-dir ./embeddings/browsecomp_plus
+```
+
+### Search and Eval 
+```bash 
+mkdir -p runs
+python -m tevatron.retriever.driver.search --query_reps "embeddings/browsecomp_plus_query/qwen3_0.6b/query.pkl" --passage_reps "embeddings/browsecomp_plus/qwen3-embedding-0.6b/*.pkl" --depth 1000 --batch_size 128 --save_text --save_ranking_to runs/qwen3-0.6b_top1000.txt
+
+python -m tevatron.utils.format.convert_result_to_trec --input runs/qwen3-0.6b_top1000.txt --output runs/qwen3-0.6b_top1000.trec
+
+# Retrieval Results (Evidence)
+python -m pyserini.eval.trec_eval -c -m recall.5,100,1000 -m ndcg_cut.10 examples/BrowseComp-Plus/topics-qrels/qrel_evidence.txt runs/qwen3-0.6b_top1000.trec
+
+# Retrieval Results (Gold)
+python -m pyserini.eval.trec_eval  -c -m recall.5,100,1000  -m ndcg_cut.10   examples/BrowseComp-Plus/topics-qrels/qrel_golds.txt  runs/qwen3-0.6b_top1000.trec
+
 ```

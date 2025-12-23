@@ -9,3 +9,10 @@ fineweb_10BT_emb/**
 embeddings/**
 tmp.*
 fineweb
+**/debug*.*
+data/**
+gpt_oss_data_process/data/**
+runs/**
+tmp_1/**
+topics-qrels/**
+.env
